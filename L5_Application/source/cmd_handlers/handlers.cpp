@@ -686,6 +686,13 @@ CMD_HANDLER_FUNC(learnIrHandler)
     return true;
 }
 
+CMD_HANDLER_FUNC(helloHandler)
+{
+    output.printf("hello world!\n");
+
+    return true;
+}
+
 #if TERMINAL_USE_CAN_BUS_HANDLER
 #include "can.h"
 #include "printf_lib.h"
