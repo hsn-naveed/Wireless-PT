@@ -23,6 +23,7 @@
  * 			@see L0_LowLevel/lpc_sys.h if you wish to override printf/scanf functions.
  *
  */
+#include <stdio.h>
 #include "tasks.hpp"
 #include "examples/examples.hpp"
 
@@ -120,6 +121,7 @@ int main(void)
         scheduler_add_task(new wifiTask(Uart3::getInstance(), PRIORITY_LOW));
     #endif
 
+    printf("System boot-up!\n");
     scheduler_start(); ///< This shouldn't return
     return -1;
 }
