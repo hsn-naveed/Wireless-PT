@@ -693,6 +693,69 @@ CMD_HANDLER_FUNC(helloHandler)
     return true;
 }
 
+CMD_HANDLER_FUNC(ledHandler)
+{
+    int total = 4000, period = 200, times, tmp;
+    int switch_major = 0, switch_minor = 30;
+    int led_major = 2, led_minor = 7;
+    str tmpStr;
+
+    if(cmdParams.containsIgnoreCase("-t")) {
+        tmpStr = str(cmdParams.subString("-t"));
+        tmpStr.scanf("-t%d", &tmp);
+        if (tmp > 0)
+            total = tmp;
+    }
+
+    if(cmdParams.containsIgnoreCase("-p")) {
+        tmpStr = str(cmdParams.subString("-p"));
+        tmpStr.scanf("-p%d", &tmp);
+        if (tmp > 0)
+            period = tmp;
+    }
+
+    if(cmdParams.containsIgnoreCase("-i")) {
+        tmpStr = str(cmdParams.subString("-i"));
+        tmpStr.scanf("-iP%u.%u", &switch_major, &switch_minor);
+    }
+
+    if(cmdParams.containsIgnoreCase("-o")) {
+        tmpStr = str(cmdParams.subString("-o"));
+        tmpStr.scanf("-oP%u.%u", &led_major, &led_minor);
+    }
+
+    times = total / period;
+    printf("total time = %dms, period = %dms,\n", total, period);
+    printf("GPIO(in) = P%u.%u, GPIO(out) = P%u.%u\n",
+            switch_major, switch_minor, led_major, led_minor);
+
+    /* Set directions: Output to an LED; Input from a switch */
+    LPC_GPIO(led_major)->FIODIR |= BITS(led_minor);
+    LPC_GPIO(switch_major)->FIODIR &= MASK(switch_minor);
+
+    /* Turn off LED initially */
+    LPC_GPIO(led_major)->FIOPIN &= MASK(led_minor);
+
+    while (times--) {
+        if (LPC_GPIO(switch_major)->FIOPIN & BITS(switch_minor)) {
+            /* Blinking when switch-on */
+            LPC_GPIO(led_major)->FIOPIN |= BITS(led_minor);
+            vTaskDelay(period / 2);
+            LPC_GPIO(led_major)->FIOPIN &= MASK(led_minor);
+        } else {
+            /* Non-blinking when switch-off */
+            LPC_GPIO(led_major)->FIOPIN |= BITS(led_minor);
+            vTaskDelay(period / 2);
+        }
+        vTaskDelay(period / 2);
+    }
+
+    /* Turn off LED lastly */
+    LPC_GPIO(led_major)->FIOPIN &= MASK(led_minor);
+
+    return true;
+}
+
 #if TERMINAL_USE_CAN_BUS_HANDLER
 #include "can.h"
 #include "printf_lib.h"

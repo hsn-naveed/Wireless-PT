@@ -111,6 +111,12 @@ bool terminalTask::taskEntry()
     cp.addHandler(learnIrHandler,  "learn",    "Begin to learn IR codes for numbers 0-9");
     cp.addHandler(wirelessHandler, "wireless", "Use 'wireless' to see the nested commands");
     cp.addHandler(helloHandler, "hello", "Use 'hello' to print hello world");
+    cp.addHandler(ledHandler, "led", "Use 'led' to light an external LED via GPIO:\n"
+                                     "\t'-t' : Set total time for LED control (Default: 4000ms)\n"
+                                     "\t'-p' : Set blinking period (Default: 200ms)\n"
+                                     "\t'-i' : Set GPIO input port (Default: P0.30)\n"
+                                     "\t'-o' : Set GPIO output port (Default: P2.7)\n"
+                                     "example : led -t8000 -t100");
 
     /* Firmware upgrade handlers
      * Please read "netload_readme.txt" at ref_and_datasheets directory.

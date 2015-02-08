@@ -1007,6 +1007,7 @@ typedef struct
 #define LPC_GPIO2             ((LPC_GPIO_TypeDef      *) LPC_GPIO2_BASE    )
 #define LPC_GPIO3             ((LPC_GPIO_TypeDef      *) LPC_GPIO3_BASE    )
 #define LPC_GPIO4             ((LPC_GPIO_TypeDef      *) LPC_GPIO4_BASE    )
+#define LPC_GPIO(x)           ((LPC_GPIO_TypeDef      *) (LPC_GPIO_BASE + x * 0x00020))
 #define LPC_WDT               ((LPC_WDT_TypeDef       *) LPC_WDT_BASE      )
 #define LPC_TIM0              ((LPC_TIM_TypeDef       *) LPC_TIM0_BASE     )
 #define LPC_TIM1              ((LPC_TIM_TypeDef       *) LPC_TIM1_BASE     )
@@ -1050,5 +1051,7 @@ typedef struct
 #define LPC_USB               ((LPC_USB_TypeDef       *) LPC_USB_BASE      )
 
 
+#define BITS(x)     (1UL << (x))
+#define MASK(x)     (~(1UL << (x)))
 
 #endif  // __LPC17xx_H__

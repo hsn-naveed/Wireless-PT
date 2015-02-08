@@ -87,5 +87,8 @@ CMD_HANDLER_FUNC(wirelessHandler);
 /// Print hello world
 CMD_HANDLER_FUNC(helloHandler);
 
+/// Light an LED via GPIO
+CMD_HANDLER_FUNC(ledHandler);
+
 
 #endif /* HANDLERS_HPP_ */
