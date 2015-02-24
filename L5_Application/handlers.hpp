@@ -90,5 +90,8 @@ CMD_HANDLER_FUNC(helloHandler);
 /// Light an LED via GPIO
 CMD_HANDLER_FUNC(ledHandler);
 
+/// Read out information from SPI flash
+CMD_HANDLER_FUNC(spiHandler);
+
 
 #endif /* HANDLERS_HPP_ */

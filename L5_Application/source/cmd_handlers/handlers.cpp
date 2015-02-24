@@ -756,6 +756,212 @@ CMD_HANDLER_FUNC(ledHandler)
     return true;
 }
 
+static void spi_flash_init()
+{
+    /* Select GPIO0.6, MISO, MOSI, and SCK pin-select functionality */
+    LPC_PINCON->PINSEL0 &= ~((3 << 12) | (3 << 14) | (3 << 16) | (3 << 18));
+    LPC_PINCON->PINSEL0 |= ((2 << 14) | (2 << 16) | (2 << 18));
+
+    /* Initialize GPIO0.6 as an output pin with default HIGH */
+    LPC_GPIO0->FIODIR |= BITS(6);
+    LPC_GPIO0->FIOPIN |= BITS(6);
+
+    /* Power up SPI1 and set its clock */
+    lpc_pconp(pconp_ssp1, true);
+    lpc_pclk(pclk_ssp1, clkdiv_8);
+
+    /* 8-bit, mode 0 */
+    LPC_SSP1->CR0 = 0x7;
+    /* SPI in Master mode */
+    LPC_SSP1->CR1 = BITS(1);
+    /* SCK speed = CPU / 8 */
+    LPC_SSP1->CPSR = 0x8;
+}
+
+static unsigned char spi1_exchange_byte(char input)
+{
+    LPC_SSP1->DR = input;
+    /* Hold during busy state of SPI */
+    while(LPC_SSP1->SR & BITS(4));
+    /* Read out the remaining data */
+    return LPC_SSP1->DR;
+}
+
+#define spi1_flash_chip_select() \
+    do {LPC_GPIO0->FIOPIN &= MASK(6);} while (0)
+
+#define spi1_flash_chip_deselect() \
+    do {LPC_GPIO0->FIOPIN |= BITS(6);} while (0)
+
+#define xmit_spi(dat)           spi1_exchange_byte(dat)
+#define rcvr_spi()              spi1_exchange_byte(0xff)
+
+#define SPI_FLASH_ID_OPCODE     0x9f
+#define SPI_FLASH_ID_LEN        0x5
+#define SPI_FLASH_STATUS_OPCODE 0xd7
+#define SPI_FLASH_STATUS_LEN    0x2
+#define SPI_FLASH_STATUS_MAX    16
+
+#define SPI_FLASH_PAGE_SIZE_OFF 8
+#define FAT_PARTITION_OFFSET    0x1c6
+
+static char flash_status[SPI_FLASH_STATUS_MAX][4][32] = {
+        {"Erase Suspend",                       "Erase suspended",      "No erase suspended",   "1"},
+        {"Program Suspend (Buffer 1)",          "Program suspended",    "No program suspended", "1"},
+        {"Program Suspend (Buffer 2)",          "Program suspended",    "No program suspended", "1"},
+        {"Sector Lockdown Enabled",             "Enabled",              "Disabled",             "1"},
+        {"Reserved",                            "Reserved",             "Reserved",             "0"},
+        {"Erase/Program Error",                 "Error detected",       "Erase succeed",        "1"},
+        {"Reserved",                            "Reserved",             "Reserved",             "0"},
+        {"Ready/Busy Status",                   "Ready",                "Busy",                 "0"},
+        {"Page Size Configuration",             "512 bytes",            "528 bytes",            "1"},
+        {"Sector Protection Status",            "Enabled",              "Disabled",             "1"},
+        {"Density Code",                        "",                     "",                     "4"},
+        {"Density Code",                        "",                     "",                     "4"},
+        {"Density Code",                        "",                     "",                     "4"},
+        {"Density Code",                        "",                     "",                     "4"},
+        {"Compare Result",                      "Not match",            "Match",                "1"},
+        {"Ready/Busy Status",                   "Ready",                "Busy",                 "1"},
+};
+
+CMD_HANDLER_FUNC(spiHandler)
+{
+    unsigned char flash_ids[] = {0x1f, 0x26, 0x0, 0x1, 0x0};
+    unsigned char test_falsh_id[SPI_FLASH_ID_LEN];
+    unsigned char flash_page[528];
+    unsigned int page_index = 0x0;
+
+    int err = 0, retry = 1;
+    int val, i, loop;
+    char tmp, len = 0;
+
+    printf("-----------Reading SPI Flash Information-----------\n\n");
+
+    spi_flash_init();
+
+    /* Read the signature of the SPI Flash */
+    spi1_flash_chip_select();
+
+    xmit_spi(SPI_FLASH_ID_OPCODE);
+    for (i = 0; i < SPI_FLASH_ID_LEN; i++) {
+        test_falsh_id[i] = rcvr_spi();
+        if (test_falsh_id[i] != flash_ids[i])
+            err++;
+    }
+
+    spi1_flash_chip_deselect();
+
+    printf("Manufacture ID %smatched : ", err ? "dis" : "");
+    for (i = 0; i < SPI_FLASH_ID_LEN; i++)
+            printf("0x%x ", test_falsh_id[i]);
+    printf("\n");
+
+    if (err)
+        goto fail;
+
+    printf("\n");
+
+    /* Read the status register of the SPI Flash */
+    spi1_flash_chip_select();
+
+    xmit_spi(SPI_FLASH_STATUS_OPCODE);
+    for (val = 0, i = SPI_FLASH_STATUS_LEN - 1; i >= 0; i--)
+        val |= rcvr_spi() << (i * 8);
+
+    spi1_flash_chip_deselect();
+
+    printf("SPI Flash Status (0x%x): \n", val);
+
+    /* Display all the status bits */
+    for (i = SPI_FLASH_STATUS_MAX - 1; i >= 0; i--) {
+        if (len == 0)
+            len = flash_status[i][3][0] - '0';
+
+        /* Bypass reserved bits and multi-bits fields (until last bit) */
+        if (!len || --len)
+            continue;
+
+        /* Get the width of the field */
+        tmp = flash_status[i][3][0] - '0';
+
+        /* Override tmp for bit validation if it is a 1-bit status */
+        if (tmp == 1)
+            tmp = !(val & BITS(i));
+
+        if (tmp > 1)
+            printf("%26s : 0x%x\n", flash_status[i][0], (val & GEN_MASK(tmp, i)) >> i);
+        else
+            printf("%26s : %s\n", flash_status[i][0], flash_status[i][tmp + 1]);
+    }
+
+    printf("\n");
+
+load_sector:
+    /*
+     * Load the boot sector
+     * Try 1) Load MBR sector
+     * Try 2) Load 1st sector of the 1st partition
+     */
+    spi1_flash_chip_select();
+
+    xmit_spi(0xd2);
+    xmit_spi(page_index >> 6);
+    xmit_spi((page_index << 2) & 0xff);
+    xmit_spi(0x0);
+    xmit_spi(0x0);
+    xmit_spi(0x0);
+    xmit_spi(0x0);
+    xmit_spi(0x0);
+
+    /* Read 512 or 528 bytes based on the actual Flash page size */
+    loop = (val & BITS(SPI_FLASH_PAGE_SIZE_OFF)) ? 512 : 528;
+
+    for (i = 0; i < loop; i++)
+        flash_page[i] = rcvr_spi();
+
+    spi1_flash_chip_deselect();
+
+    /* Validate the signature and first byte */
+    if (flash_page[510] != 0x55 || flash_page[511] != 0xaa) {
+        printf("SPI Flash signature validation failed!\n");
+        goto fail;
+    } else if (flash_page[0] != 0xeb) {
+        /* Retry 1st sector of partition 1 instead of MBR sector */
+        printf("SPI Flash MBR is not in FAT format\n");
+        if (retry--) {
+            page_index = flash_page[FAT_PARTITION_OFFSET] |
+                         flash_page[FAT_PARTITION_OFFSET + 1] << 8 |
+                         flash_page[FAT_PARTITION_OFFSET + 2] << 16 |
+                         flash_page[FAT_PARTITION_OFFSET + 3] << 24;
+            printf("Retrying at 1st sector of 1st partition (offset %d)\n", page_index);
+            goto load_sector;
+        } else {
+            goto fail;
+        }
+    }
+
+    printf("\nDumping SPI Flash boot sector (%d bytes) :", loop);
+    for (i = 0; i < loop; i++) {
+        if (i % 16)
+            printf("%2x ", flash_page[i]);
+        else
+            printf("\n%3x : %2x ", i, flash_page[i]);
+    }
+
+    printf("\n\nSPI Flash vFAT partition information :\n");
+    /* Bytes 11-12 : Number of bytes per sector */
+    printf("%42s : %d\n", "Number of bytes per sector", flash_page[12] << 8 | flash_page[11]);
+    /* Bytes 13 : Number of sectors per cluster */
+    printf("%42s : %d\n", "Number of sectors per cluster", flash_page[13]);
+    /* Bytes 19-20 : Total number of sectors in the filesystem */
+    printf("%42s : %d\n", "Total number of sectors in the filesystem", flash_page[20] << 8 | flash_page[19]);
+
+fail:
+    printf("\n-----------End of SPI Flash Information-----------\n");
+
+    return true;
+}
+
 #if TERMINAL_USE_CAN_BUS_HANDLER
 #include "can.h"
 #include "printf_lib.h"

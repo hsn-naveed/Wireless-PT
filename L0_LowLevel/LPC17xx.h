@@ -1053,5 +1053,6 @@ typedef struct
 
 #define BITS(x)     (1UL << (x))
 #define MASK(x)     (~(1UL << (x)))
+#define GEN_MASK(len, off)  (((1 << len) - 1) << off)
 
 #endif  // __LPC17xx_H__

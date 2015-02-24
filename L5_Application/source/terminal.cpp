@@ -117,6 +117,7 @@ bool terminalTask::taskEntry()
                                      "\t'-i' : Set GPIO input port (Default: P0.30)\n"
                                      "\t'-o' : Set GPIO output port (Default: P2.7)\n"
                                      "example : led -t8000 -t100");
+    cp.addHandler(spiHandler, "spi", "Use 'spi' to read out the information of the SPI flash attached to SSP1.\n");
 
     /* Firmware upgrade handlers
      * Please read "netload_readme.txt" at ref_and_datasheets directory.
