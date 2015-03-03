@@ -962,6 +962,243 @@ fail:
     return true;
 }
 
+/**
+ * UART Command dividers
+ *
+ * Formula:
+ * Baudrate = Peripheral Clock / (16 * dl * (1 + divadd / mul))
+ *
+ * @rate: Baud rate
+ * @dl: 16-bit dividers ((DLM << 8) | DLM)
+ * @divadd: Numerator for the fraction
+ * @mul: Denominator for the fraction
+ */
+static struct uart_divider {
+        unsigned int rate;
+        unsigned short dl;
+        unsigned char divadd;
+        unsigned char mul;
+} divisor_list[] = {
+#ifdef PARAM_HAROLDO
+        /* Required 9600Hz, Acutal 9616Hz, err = 1.6% */
+        {9600, 312, 0, 1},
+#else
+        /* Required 9600Hz, Acutal 9600Hz, err = 0 */
+        {9600, 250, 1, 4},
+#endif
+        /* Required 19200Hz, Acutal 19200Hz, err = 0 */
+        {19200, 125, 1, 4},
+        /* Required 38400Hz, Acutal 38372Hz, err = 0.7% */
+        {38400, 43, 9, 11},
+        /* Required 57600Hz, Acutal 57544Hz, err = 0.9% */
+        {57600, 46, 2, 15},
+        /* Required 115200Hz, Acutal 115089Hz, err = 0.9% */
+        {115200, 23, 2, 15},
+};
+
+#define BUF_MAX             256
+#define FIFO_DEPTH          8
+#define MIN_SLEEP_PERIOD    10
+
+static char rx_buf[BUF_MAX];
+static unsigned int rx_index, tx_index;
+
+static void uart_sendbuf(int port, char *buf)
+{
+    int i;
+
+    /* Feed TX FIFO as long as FIFO is empty */
+    while (LPC_UART23(port)->LSR & BITS(5)) {
+        for (i = 0; i < FIFO_DEPTH && buf[tx_index] != '\0'; i++) {
+            LPC_UART23(port)->THR = *(buf + tx_index);
+            printf("Master: sent char '%c' via UART %d\n",
+                   *(buf + tx_index++), port);
+        }
+        if (buf[tx_index] == '\0')
+            break;
+    }
+}
+
+static void uart_putchar(int port, char out)
+{
+    while (!(LPC_UART23(port)->LSR & BITS(5)));
+    LPC_UART23(port)->THR = out;
+}
+
+static void uart_getchars(int port, char *buf)
+{
+    /* Empty the RX FIFO by reading it */
+    while (LPC_UART23(port)->LSR & BITS(0)) {
+        buf[rx_index++] = LPC_UART23(port)->RBR;
+    }
+}
+
+static void UART2_IRQHandler()
+{
+    uart_getchars(2, rx_buf);
+}
+
+static void UART3_IRQHandler()
+{
+    uart_getchars(3, rx_buf);
+}
+
+#define PCONP_UART(port)    (port == 2 ? pconp_uart2 : pconp_uart3)
+#define PCLK_UART(port)     (port == 2 ? pclk_uart2 : pclk_uart3)
+
+#define UART_IRQ_DISABLE(port) \
+    do {NVIC_DisableIRQ(port == 2 ? UART2_IRQn : UART3_IRQn);} while (0)
+
+#define UART_IRQ_ENABLE(port) \
+    do {NVIC_EnableIRQ(port == 2 ? UART2_IRQn : UART3_IRQn);} while (0)
+
+static bool uart_init(int port, unsigned int rate, unsigned int index)
+{
+    struct uart_divider div;
+
+    switch (port) {
+        case 2:
+            /* Select TXD2 and RXD2 pin-select functionality */
+            LPC_PINCON->PINSEL4 &= ~GEN_MASK(4, 16);
+            LPC_PINCON->PINSEL4 |= BITS(17) | BITS(19);
+            /* Enable IRQ in NVIC for UART2 */
+            isr_register(UART2_IRQn, &UART2_IRQHandler);
+            break;
+        case 3:
+            /* Select TXD3 and RXD3 pin-select functionality */
+            LPC_PINCON->PINSEL9 |= GEN_MASK(4, 24);
+            /* Enable IRQ in NVIC for UART3 */
+            isr_register(UART3_IRQn, &UART3_IRQHandler);
+            break;
+        default:
+            printf("impossible region!\n");
+            return false;
+    }
+
+    /* Power up UART and set its clock to CPU_CLK_RATE */
+    lpc_pconp(PCONP_UART(port), true);
+    lpc_pclk(PCLK_UART(port), clkdiv_1);
+
+    /* Enable DLAB */
+    LPC_UART23(port)->LCR = BITS(7);
+
+    /* Set divisors to get the required baud rate */
+    LPC_UART23(port)->DLM = divisor_list[index].dl >> 8;
+    LPC_UART23(port)->DLL = divisor_list[index].dl & 0xff;
+    LPC_UART23(port)->FDR = divisor_list[index].mul << 4 | div.divadd;
+
+    /* Disable DLAB; Set 8-bit character length, 1 stop bit, no parity */
+    LPC_UART23(port)->LCR = 3;
+
+    /* Enable and reset FIFO, set watermark to 4 -- trigger level 1 */
+    LPC_UART23(port)->FCR = BITS(6) | BITS(2) | BITS(1) | BITS(0);
+
+    /* Enable receive interrupt for UART */
+    LPC_UART23(port)->IER = BITS(0);
+
+    UART_IRQ_ENABLE(port);
+
+    return true;
+}
+
+CMD_HANDLER_FUNC(uartHandler)
+{
+    unsigned int rate_list[] = {9600, 19200, 38400, 57600, 115200};
+    unsigned int timeout = 1000, rate = 9600, i;
+    char tx_buf[BUF_MAX] = "A";
+    unsigned int index = 0;
+    bool master = false;
+    bool ret = true;
+    int port = 2;
+    str tmpStr;
+
+    tx_index = 0;
+    rx_index = 0;
+
+    if(cmdParams.containsIgnoreCase("--master"))
+        master = true;
+
+    if(cmdParams.containsIgnoreCase("-c")) {
+        tmpStr = str(cmdParams.subString("-c"));
+        tmpStr.scanf("-c%s", tx_buf);
+    }
+
+    if(cmdParams.containsIgnoreCase("-t")) {
+        tmpStr = str(cmdParams.subString("-t"));
+        tmpStr.scanf("-t%d", &timeout);
+    }
+
+    if(cmdParams.containsIgnoreCase("-p")) {
+        tmpStr = str(cmdParams.subString("-p"));
+        tmpStr.scanf("-p%d", &port);
+        switch (port) {
+        case 2:
+        case 3:
+            break;
+        default:
+            printf("Only support UART port2 and UART port3.\n");
+            ret = false;
+            goto fail;
+        }
+    }
+
+    if(cmdParams.containsIgnoreCase("-b")) {
+        tmpStr = str(cmdParams.subString("-b"));
+        tmpStr.scanf("-b%d", &rate);
+    }
+
+    /* Error out unsupported baud rate */
+    for (i = 0; i < ARRAY_SIZE(divisor_list); i++)
+        if (divisor_list[i].rate == rate)
+            break;
+
+    if (i == ARRAY_SIZE(rate_list)) {
+        printf("Unsupported baud rate for UART%d: %d\n", port, rate);
+        ret = false;
+        goto fail;
+    }
+
+    ret = uart_init(port, rate, i);
+    if (!ret)
+        goto fail;
+
+    printf("Running UART port %d as %s (%s first) at baud rate %dHz\n", port,
+           master ? "master" : "slave", master ? "TX" : "RX", rate);
+
+    /* Master Mode: send characters from command line */
+    while (master && tx_buf[tx_index] != '\0') {
+        uart_sendbuf(port, tx_buf);
+    }
+
+    /* Set timeout based on the sleep period */
+    timeout /= MIN_SLEEP_PERIOD;
+
+    /* Check the data from the RX Queue from Interrupt */
+    while (timeout--) {
+        if (rx_index > index) {
+            printf("%s: received char '%c' via UART %d\n",
+                   master ? "Master" : "Slave", rx_buf[index], port);
+            /* Slave mode: send back those received characters */
+            if (!master) {
+                uart_putchar(port, rx_buf[index] + 1);
+                printf("Slave: sent char '%c' via UART %d\n",
+                       rx_buf[index], port);
+            }
+            index++;
+        } else {
+            vTaskDelayMs(MIN_SLEEP_PERIOD);
+        }
+    }
+
+    UART_IRQ_DISABLE(port);
+
+fail:
+    if (!ret)
+        printf("\n");
+
+    return ret;
+}
+
 #if TERMINAL_USE_CAN_BUS_HANDLER
 #include "can.h"
 #include "printf_lib.h"

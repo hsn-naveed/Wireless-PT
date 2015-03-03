@@ -93,5 +93,7 @@ CMD_HANDLER_FUNC(ledHandler);
 /// Read out information from SPI flash
 CMD_HANDLER_FUNC(spiHandler);
 
+/// UART test command (Using interrupt)
+CMD_HANDLER_FUNC(uartHandler);
 
 #endif /* HANDLERS_HPP_ */

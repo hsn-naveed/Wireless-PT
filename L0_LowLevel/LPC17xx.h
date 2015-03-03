@@ -1018,6 +1018,7 @@ typedef struct
 #define LPC_UART1             ((LPC_UART1_TypeDef     *) LPC_UART1_BASE    )
 #define LPC_UART2             ((LPC_UART_TypeDef      *) LPC_UART2_BASE    )
 #define LPC_UART3             ((LPC_UART_TypeDef      *) LPC_UART3_BASE    )
+#define LPC_UART23(x)         ((LPC_UART_TypeDef      *) (LPC_UART2_BASE + (x - 2) * 0x4000))
 #define LPC_PWM1              ((LPC_PWM_TypeDef       *) LPC_PWM1_BASE     )
 #define LPC_I2C0              ((LPC_I2C_TypeDef       *) LPC_I2C0_BASE     )
 #define LPC_I2C1              ((LPC_I2C_TypeDef       *) LPC_I2C1_BASE     )
@@ -1054,5 +1055,6 @@ typedef struct
 #define BITS(x)     (1UL << (x))
 #define MASK(x)     (~(1UL << (x)))
 #define GEN_MASK(len, off)  (((1 << len) - 1) << off)
+#define ARRAY_SIZE(x) (sizeof(x) / sizeof((x)[0]))
 
 #endif  // __LPC17xx_H__

@@ -118,6 +118,14 @@ bool terminalTask::taskEntry()
                                      "\t'-o' : Set GPIO output port (Default: P2.7)\n"
                                      "example : led -t8000 -t100");
     cp.addHandler(spiHandler, "spi", "Use 'spi' to read out the information of the SPI flash attached to SSP1.\n");
+    cp.addHandler(uartHandler, "uart", "Use 'uart' to test UART2 or UART3 function with other boards.\n"
+                               "'--master' : Master mode (TX first); Default: slave (RX first)\n"
+                               "'-p' : Set UART port 2 (default) or 3\n"
+                               "'-b' : Set baud rate (9600[*], 19200, 38400, 57600 or 115200)\n"
+                               "'-c' : Characters for Master mode to send (Default: 'A'; Max length: 255)\n"
+                               "'-t' : Timeout threshold in ms (Default: 1000ms)\n"
+                               "example1 : uart --master -cCheeseBurger -p3 -b115200\n"
+                               "example2 : uart --slave -p3 -b9600");
 
     /* Firmware upgrade handlers
      * Please read "netload_readme.txt" at ref_and_datasheets directory.
