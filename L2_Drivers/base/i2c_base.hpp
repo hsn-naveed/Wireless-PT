@@ -125,6 +125,11 @@ class I2C_Base
         bool init(uint32_t pclk, uint32_t busRateInKhz);
 
         /**
+         * Configure I2C as Slave mode.
+         */
+        bool initSlave(const uint8_t addr, uint8_t *buf, unsigned int len);
+
+        /**
          * Disables I2C operation
          * This can be used to disable all I2C operations in case of severe I2C Bus Failure
          * @warning Once disabled, I2C cannot be enabled again
@@ -138,6 +143,11 @@ class I2C_Base
         bool mDisableOperation;        ///< Tracks if I2C is disabled by disableOperation()
         SemaphoreHandle_t mI2CMutex;   ///< I2C Mutex used when FreeRTOS is running
         SemaphoreHandle_t mTransferCompleteSignal; ///< Signal that indicates read is complete
+        bool slave_mode;               ///< Flag for running in Slave mode
+        uint8_t *slaveBuf;             ///< I2C slave buffer when acting in Slave mode
+        uint8_t slaveBufLen;           ///< I2C slave buffer length when acting in Slave mode
+        uint32_t slaveCount;           ///< I2C slave counter for actual data
+        uint32_t slaveIndex;           ///< I2C slave buffer index
 
         /**
          * The status of I2C is returned from the I2C function that handles state machine

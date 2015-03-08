@@ -144,6 +144,13 @@ I2C_Base::I2C_Base(LPC_I2C_TypeDef* pI2CBaseAddr) :
     else {
         mIRQ = (IRQn_Type)99; // Using invalid IRQ on purpose
     }
+
+    /* Slave mode */
+    slave_mode = false;
+    slaveBuf = NULL;
+    slaveBufLen = 0;
+    slaveCount = 0;
+    slaveIndex = 0;
 }
 
 bool I2C_Base::init(uint32_t pclk, uint32_t busRateInKhz)
@@ -187,6 +194,41 @@ bool I2C_Base::init(uint32_t pclk, uint32_t busRateInKhz)
     return true;
 }
 
+bool I2C_Base::initSlave(const uint8_t addr, uint8_t *buf, unsigned int len)
+{
+    if (!buf || !len) {
+        return false;
+    }
+
+    slaveBuf = buf;
+    slaveBufLen = len;
+    slave_mode = true;
+
+    switch(mIRQ) {
+    case I2C0_IRQn:
+        lpc_pconp(pconp_i2c0, true);
+        break;
+    case I2C1_IRQn:
+        lpc_pconp(pconp_i2c1, true);
+        break;
+    case I2C2_IRQn:
+        lpc_pconp(pconp_i2c2, true);
+        break;
+    default:
+        return false;
+    }
+
+    /* Clear ALL I2C Flags */
+    mpI2CRegs->I2CONCLR = 0x6C;
+    /* Set I2C slave address */
+    mpI2CRegs->I2ADR0 = addr;
+    /* Set I2EN, AA */
+    mpI2CRegs->I2CONSET = BITS(6) | BITS(2);
+    /* Enable IRQ */
+    NVIC_EnableIRQ(mIRQ);
+
+    return slave_mode;
+}
 
 
 /// Private ///
@@ -225,6 +267,7 @@ I2C_Base::mStateMachineStatus_t I2C_Base::i2cStateMachine()
         start           = 0x08,
         repeatStart     = 0x10,
         arbitrationLost = 0x38,
+        stopOrRestartSlave = 0xA0,
 
         // Master Transmitter States:
         slaveAddressAcked  = 0x18,
@@ -237,6 +280,23 @@ I2C_Base::mStateMachineStatus_t I2C_Base::i2cStateMachine()
         readModeNackedBySlave = 0x48,
         dataAvailableAckSent  = 0x50,
         dataAvailableNackSent = 0x58,
+
+        // Slave Receiver States:
+        ownSLAWAcked               = 0x60,
+        ownSLAWAckedWithArbLost    = 0x68,
+        gernalCallAcked            = 0x70,
+        gernalCallAckedWithArbLost = 0x78,
+        dataAckedByOwnSLA          = 0x80,
+        dataNackedByOwnSLA         = 0x88,
+        dataAckedByGernalCall      = 0x90,
+        dataNackedByGernalCall     = 0x98,
+
+        // Slave Transmitter States:
+        ownSLARAcked               = 0xA8,
+        ownSLARAckedWithArbLost    = 0xB0,
+        dataAckedByMaster          = 0xB8,
+        dataNackedByMaster         = 0xC0,
+        lastDataAckedByMaster      = 0xC8,
     };
 
     mStateMachineStatus_t state = busy;
@@ -270,8 +330,86 @@ I2C_Base::mStateMachineStatus_t I2C_Base::i2cStateMachine()
                                 else                                        \
                                     state = writeComplete;
 
+    #define SLAVE_NORMAL_ACK() \
+            do { \
+                mpI2CRegs->I2CONSET = BITS(2); \
+                mpI2CRegs->I2CONCLR = BITS(3); \
+            } while (0)
+    #define I2C_BUF_MAX         256
+    #define I2C_MEM_MAX         4
+    #define I2C_DATA_IDX        2
+    #define I2C_COUNT_IDX       1
+    #define I2C_STATUS_IDX      0
+    #define I2C_STATUS_END      0x1
+    #define I2C_STATUS_RESTART  0xff
+
     switch (mpI2CRegs->I2STAT)
     {
+        case ownSLAWAcked:
+        case gernalCallAcked:
+            SLAVE_NORMAL_ACK();
+            slaveCount = I2C_BUF_MAX;
+            slaveIndex = I2C_DATA_IDX;
+            break;
+        case ownSLAWAckedWithArbLost:
+        case gernalCallAckedWithArbLost:
+            mpI2CRegs->I2CONSET = BITS(5) | BITS(2);
+            mpI2CRegs->I2CONCLR = BITS(3);
+            slaveCount = I2C_BUF_MAX;
+            slaveIndex = I2C_DATA_IDX;
+            break;
+        case dataAckedByOwnSLA:
+            slaveBuf[slaveIndex++] = mpI2CRegs->I2DAT;
+            if (slaveIndex <= slaveCount)
+                SLAVE_NORMAL_ACK();
+            else
+                mpI2CRegs->I2CONCLR |= BITS(3) | BITS(2);
+            break;
+        case dataAckedByGernalCall:
+            slaveBuf[slaveIndex++] = mpI2CRegs->I2DAT;
+            mpI2CRegs->I2CONCLR |= BITS(3) | BITS(2);
+            break;
+        case dataNackedByOwnSLA:
+        case dataNackedByGernalCall:
+            /* Buffer filling completed */
+            SLAVE_NORMAL_ACK();
+            slaveBuf[I2C_COUNT_IDX] = slaveIndex - I2C_DATA_IDX;
+            slaveBuf[I2C_STATUS_IDX] = I2C_STATUS_END;
+            break;
+        case stopOrRestartSlave:
+            SLAVE_NORMAL_ACK();
+            /* Going to read */
+            if (slaveIndex > I2C_DATA_IDX + 1) {
+                slaveBuf[I2C_STATUS_IDX] = I2C_STATUS_END;
+                slaveBuf[I2C_COUNT_IDX] = slaveIndex - I2C_DATA_IDX;
+            } else {
+                slaveBuf[I2C_STATUS_IDX] = I2C_STATUS_RESTART;
+            }
+            break;
+        case ownSLARAcked:
+            slaveCount = slaveBuf[I2C_COUNT_IDX];
+            slaveIndex = I2C_DATA_IDX;
+            mpI2CRegs->I2DAT = slaveBuf[slaveIndex++];
+            SLAVE_NORMAL_ACK();
+            break;
+        case ownSLARAckedWithArbLost:
+            slaveCount = slaveBuf[I2C_COUNT_IDX];
+            slaveIndex = I2C_DATA_IDX;
+            mpI2CRegs->I2DAT = slaveBuf[slaveIndex++];
+            SLAVE_NORMAL_ACK();
+            mpI2CRegs->I2CONSET |= BITS(6);
+            break;
+        case dataAckedByMaster:
+            if (slaveIndex < slaveCount + I2C_DATA_IDX)
+                mpI2CRegs->I2DAT = slaveBuf[slaveIndex++];
+            else
+                mpI2CRegs->I2DAT = 0;
+            SLAVE_NORMAL_ACK();
+            break;
+        case dataNackedByMaster:
+        case lastDataAckedByMaster:
+            SLAVE_NORMAL_ACK();
+            break;
         case start:
             mpI2CRegs->I2DAT = I2C_WRITE_ADDR(mTransaction.slaveAddr);
             clearSIFlag();

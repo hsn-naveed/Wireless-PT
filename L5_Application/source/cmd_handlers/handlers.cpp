@@ -1199,6 +1199,133 @@ fail:
     return ret;
 }
 
+/*
+ * I2C Slave Buffer Structure
+ *
+ * Description : Status   Count   Data    ... ...    Max
+ *       Index :   0        1      2             I2C_BUF_MAX
+ *
+ * Status : CLEAR or END (Rx finished) or RESTART (Going to Tx)
+ * Count  : The length/count of valid data in the Slave Buffer
+ * Data   : Valid data, must start from index 2
+ */
+#define I2C_BUF_MAX         16
+#define I2C_MEM_MAX         2
+#define I2C_DATA_IDX        2
+#define I2C_COUNT_IDX       1
+#define I2C_STATUS_IDX      0
+#define I2C_STATUS_CLEAR    0x0
+#define I2C_STATUS_END      0x1
+#define I2C_STATUS_RESTART  0xff
+
+/*
+ * I2C Slave Register Map
+ *
+ * Address      Value       Description
+ *   0x0        Write 0     Turn off LED9
+ *   0x0        Write 1     Turn on LED9
+ *   0x0        Read        Read the value of this register
+ *   0x1        Write x     No function
+ *   0x1        Read        Read SPI Flash ID (5 bytes)
+ */
+#define I2C_CMD_LED         0x0
+#define I2C_CMD_SPI_FLASH   0x1
+
+CMD_HANDLER_FUNC(i2cSlaveHandler)
+{
+    I2C2& i2c = I2C2::getInstance();
+    const uint8_t slaveAddr = 0x88;
+    unsigned int timeout = 30000;
+    uint8_t buffer[I2C_BUF_MAX];
+    uint8_t memory[I2C_MEM_MAX];
+    bool infinity;
+    uint8_t addr;
+    uint64_t time;
+    str tmpStr;
+    int i;
+
+    if(cmdParams.containsIgnoreCase("-t")) {
+        tmpStr = str(cmdParams.subString("-t"));
+        tmpStr.scanf("-t%d", &timeout);
+    }
+
+    if (!timeout) {
+        infinity = true;
+        printf("Entering infinity loop of slave mode.\n");
+    } else {
+        infinity = false;
+        printf("Counting down slave mode from %d ms\n", timeout);
+    }
+
+    /* Initialize GPIO1[0] to control LED9 */
+    LPC_GPIO1->FIODIR |= BITS(0);
+    /* Turn off LED initially */
+    LPC_GPIO1->FIOPIN |= BITS(0);
+
+    /* Initialize SPI Flash */
+    spi_flash_init();
+
+    memset(buffer, 0, sizeof(buffer));
+    memset(memory, 0, sizeof(memory));
+
+    i2c.initSlave(slaveAddr, buffer, ARRAY_SIZE(buffer));
+
+    time = xTaskGetMsCount();
+
+    while (infinity || timeout) {
+        switch (buffer[I2C_STATUS_IDX]) {
+        case I2C_STATUS_RESTART:
+            /* Going to read */
+            NVIC_DisableIRQ(I2C2_IRQn);
+            buffer[I2C_STATUS_IDX] = I2C_STATUS_CLEAR;
+            /* Save the register address */
+            addr = buffer[I2C_DATA_IDX];
+            switch (addr) {
+            case I2C_CMD_LED:
+                buffer[I2C_COUNT_IDX] = 1;
+                buffer[I2C_DATA_IDX] = memory[addr];
+                printf("Loading data %x from register %x\n",
+                       memory[addr], addr);
+                break;
+            case I2C_CMD_SPI_FLASH:
+                buffer[I2C_COUNT_IDX] = 5;
+                /* Read the signature of the SPI Flash */
+                spi1_flash_chip_select();
+                xmit_spi(SPI_FLASH_ID_OPCODE);
+                for (i = 0; i < SPI_FLASH_ID_LEN; i++)
+                    buffer[i + I2C_DATA_IDX] = rcvr_spi();
+                spi1_flash_chip_deselect();
+                printf("Loading SPI Flash ID via register 1\n");
+                break;
+            default:
+                break;
+            }
+            NVIC_EnableIRQ(I2C2_IRQn);
+            break;
+        case I2C_STATUS_END:
+            /* Write completed */
+            buffer[I2C_STATUS_IDX] = I2C_STATUS_CLEAR;
+            addr = buffer[I2C_DATA_IDX];
+            if (addr >= I2C_MEM_MAX)
+                continue;
+            memory[addr] = buffer[I2C_DATA_IDX + 1];
+            printf("Saving data %x to register %x\n",
+                   buffer[I2C_DATA_IDX + 1], addr);
+            break;
+        default:
+            if (xTaskGetMsCount() == time + timeout)
+                timeout = 0;
+            if (memory[I2C_CMD_LED])
+                LPC_GPIO1->FIOPIN &= MASK(0);
+            else
+                LPC_GPIO1->FIOPIN |= BITS(0);
+            break;
+        }
+    }
+
+    return true;
+}
+
 #if TERMINAL_USE_CAN_BUS_HANDLER
 #include "can.h"
 #include "printf_lib.h"

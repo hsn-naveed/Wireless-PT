@@ -126,6 +126,9 @@ bool terminalTask::taskEntry()
                                "'-t' : Timeout threshold in ms (Default: 1000ms)\n"
                                "example1 : uart --master -cCheeseBurger -p3 -b115200\n"
                                "example2 : uart --slave -p3 -b9600");
+    cp.addHandler(i2cSlaveHandler, "i2c-slave", "Use 'i2c-slave' to test I2C2 function as a Slave.\n"
+                               "'-t' : Timeout threshold in ms (Default: 30000ms; Infinity if -t0)\n"
+                               "example1 : i2c-slave -t0\n");
 
     /* Firmware upgrade handlers
      * Please read "netload_readme.txt" at ref_and_datasheets directory.

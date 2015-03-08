@@ -96,4 +96,7 @@ CMD_HANDLER_FUNC(spiHandler);
 /// UART test command (Using interrupt)
 CMD_HANDLER_FUNC(uartHandler);
 
+/// I2C Slave test command
+CMD_HANDLER_FUNC(i2cSlaveHandler);
+
 #endif /* HANDLERS_HPP_ */
