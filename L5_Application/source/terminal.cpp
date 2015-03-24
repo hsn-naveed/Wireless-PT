@@ -129,6 +129,7 @@ bool terminalTask::taskEntry()
     cp.addHandler(i2cSlaveHandler, "i2c-slave", "Use 'i2c-slave' to test I2C2 function as a Slave.\n"
                                "'-t' : Timeout threshold in ms (Default: 30000ms; Infinity if -t0)\n"
                                "example1 : i2c-slave -t0\n");
+    cp.addHandler(orientationCmd, "orientation", "Two options: 'orientation on' or 'orientation off'");
 
     /* Firmware upgrade handlers
      * Please read "netload_readme.txt" at ref_and_datasheets directory.

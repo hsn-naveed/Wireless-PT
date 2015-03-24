@@ -99,4 +99,7 @@ CMD_HANDLER_FUNC(uartHandler);
 /// I2C Slave test command
 CMD_HANDLER_FUNC(i2cSlaveHandler);
 
+/// Orientation control command
+CMD_HANDLER_FUNC(orientationCmd);
+
 #endif /* HANDLERS_HPP_ */

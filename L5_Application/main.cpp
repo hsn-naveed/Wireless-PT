@@ -27,6 +27,7 @@
 #include "tasks.hpp"
 #include "examples/examples.hpp"
 
+#include "orientation.hpp"
 
 
 /**
@@ -45,6 +46,8 @@
  */
 int main(void)
 {
+    scheduler_add_task(new orient_compute(PRIORITY_LOW));
+    scheduler_add_task(new orient_process(PRIORITY_LOW));
     /**
      * A few basic tasks for this bare-bone system :
      *      1.  Terminal task provides gateway to interact with the board through UART terminal.

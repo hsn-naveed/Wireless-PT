@@ -1326,6 +1326,31 @@ CMD_HANDLER_FUNC(i2cSlaveHandler)
     return true;
 }
 
+CMD_HANDLER_FUNC(orientationCmd)
+{
+    // Our parameter was the orientation tasks' pointer, but you may want to check for NULL pointer first.
+    scheduler_task *compute = scheduler_task::getTaskPtrByName("compute");
+
+    if (!compute) {
+        printf("No such task created: compute\n");
+        return false;
+    }
+
+    // You can use FreeRTOS API or the wrapper resume() or suspend() methods
+    if (cmdParams == "on") {
+        printf("Orientation computing on.\n");
+        compute->resume();
+    } else if (cmdParams == "off") {
+        printf("Orientation computing off.\n");
+        compute->suspend();
+    } else {
+        printf("No such parameter!\n");
+        return false;
+    }
+
+    return true;
+}
+
 #if TERMINAL_USE_CAN_BUS_HANDLER
 #include "can.h"
 #include "printf_lib.h"
