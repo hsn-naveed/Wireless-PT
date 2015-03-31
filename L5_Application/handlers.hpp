@@ -102,4 +102,7 @@ CMD_HANDLER_FUNC(i2cSlaveHandler);
 /// Orientation control command
 CMD_HANDLER_FUNC(orientationCmd);
 
+/// Semaphore test command
+CMD_HANDLER_FUNC(semaphoreCmd);
+
 #endif /* HANDLERS_HPP_ */

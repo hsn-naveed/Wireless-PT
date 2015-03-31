@@ -130,6 +130,8 @@ bool terminalTask::taskEntry()
                                "'-t' : Timeout threshold in ms (Default: 30000ms; Infinity if -t0)\n"
                                "example1 : i2c-slave -t0\n");
     cp.addHandler(orientationCmd, "orientation", "Two options: 'orientation on' or 'orientation off'");
+    cp.addHandler(semaphoreCmd, "semaphore", "A test program running with semaphore and interrupt functions\n"
+                                "'-p' : Set GPIO0 port number for interrupt detection (default: P0.30)\n");
 
     /* Firmware upgrade handlers
      * Please read "netload_readme.txt" at ref_and_datasheets directory.

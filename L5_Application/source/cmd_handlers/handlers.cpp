@@ -22,6 +22,8 @@
 
 #include "FreeRTOS.h"
 #include "task.h"               // uxTaskGetSystemState()
+#include "eint.h"
+#include "timers.h"
 
 #include "command_handler.hpp"  // CMD_HANDLER_FUNC()
 #include "rtc.h"                // Set and Get System Time
@@ -1347,6 +1349,58 @@ CMD_HANDLER_FUNC(orientationCmd)
         printf("No such parameter!\n");
         return false;
     }
+
+    return true;
+}
+
+static SemaphoreHandle_t gButtonPressSemaphore;
+static TimerHandle_t semaphoreTimer;
+
+void gpio_isr()
+{
+    if (!xTimerIsTimerActive(semaphoreTimer))
+        xTimerStart(semaphoreTimer, 0);
+}
+
+void semaphore_timer_callback(TimerHandle_t pxTimer)
+{
+    xSemaphoreGive(gButtonPressSemaphore);
+}
+
+void semaphore_task(void *p)
+{
+    while (1) {
+        if (!xSemaphoreTake(gButtonPressSemaphore, portMAX_DELAY))
+            continue;
+        printf("ISR: Got a button press event\n");
+    }
+}
+
+CMD_HANDLER_FUNC(semaphoreCmd)
+{
+    int port = 26, tmp;
+    str tmpStr;
+
+    if(cmdParams.containsIgnoreCase("-p")) {
+        tmpStr = str(cmdParams.subString("-p"));
+        tmpStr.scanf("-p%d", &tmp);
+        if (tmp >= 0 && tmp < 32)
+            port = tmp;
+    }
+
+    /* Select GPIO0.x pin-select functionality */
+    LPC_PINCON->PINSEL0 &= ~(0x3 << port);
+    /* Initialize GPIO0.0 as an input pin */
+    LPC_GPIO0->FIODIR &= MASK(port);
+
+    /* Create a semaphore */
+    gButtonPressSemaphore = xSemaphoreCreateBinary();
+    /* Create a timer to delay the semaphore from ISR by 300ms for switch debounce */
+    semaphoreTimer = xTimerCreate("semaphore_timer", 300, pdFALSE, 0, semaphore_timer_callback);
+    /* Create a task to receive the semaphore */
+    xTaskCreate(semaphore_task, "semaphore_test", STACK_BYTES(1024), 0, PRIORITY_LOW, NULL);
+    /* Register an ISR for GPIO interrupt */
+    eint3_enable_port0(port, eint_falling_edge, gpio_isr);
 
     return true;
 }
