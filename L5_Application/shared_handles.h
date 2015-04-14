@@ -36,6 +36,6 @@ enum {
     shared_learnSemaphore, ///< Terminal command gives this semaphore to remoteTask (IR sensor task)
 };
 
-
+void power_wifi_init();
 
 #endif /* SHARED_HANDLES_H__ */
