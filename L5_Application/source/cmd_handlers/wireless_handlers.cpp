@@ -312,6 +312,39 @@ static CMD_HANDLER_FUNC(wsTxHandler)
     return true;
 }
 
+static CMD_HANDLER_FUNC(sendTxHandler)
+{
+    char *addr_str = NULL;
+    char *cmd_str = NULL;
+    char *param_str = NULL;
+    char data[2];
+    int len = 2;
+
+    const int max_hops_to_use = 2;
+    mesh_packet_t pkt;
+
+    if (cmdParams.tokenize(" ", 3, &addr_str, &cmd_str, &param_str) < 1) {
+        return false;
+    }
+
+    /* Data is optional */
+    const uint8_t dst_addr = atoi(addr_str);
+    data[0] = atoi(cmd_str);
+    if (param_str)
+        data[1] = atoi(param_str);
+    else
+        len = 1;
+
+    // Flush any packets
+    while (wireless_get_rx_pkt(&pkt, 0))
+        output.putline("Discarded a stale wireless packet");
+
+    if (! wireless_send(dst_addr, mesh_pkt_ack, data, len, max_hops_to_use))
+        output.putline("Error sending packet, check parameters!");
+
+    return true;
+}
+
 CMD_HANDLER_FUNC(wirelessHandler)
 {
     static CommandProcessor *pCmdProcessor = NULL;
@@ -328,6 +361,7 @@ CMD_HANDLER_FUNC(wirelessHandler)
         void *nack = 0;
         pCmdProcessor->addHandler(wsTxHandler,      "ack",  "'ack <addr> <data>'  : Send a packet and wait for acknowledgment", ack);
         pCmdProcessor->addHandler(wsTxHandler,      "nack", "'nack <addr> <data>' : Send a packet", nack);
+        pCmdProcessor->addHandler(sendTxHandler,      "send", "'send <addr> <cmd> <parameter>' : Send a packet", nack);
 
         #if MESH_USE_STATISTICS
         pCmdProcessor->addHandler(wsStatsHandler,   "stats", "'stats' : See the wireless stats");
