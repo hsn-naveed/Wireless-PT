@@ -3,6 +3,14 @@
 #include "wireless.h"
 #include "adc0.h"
 
+#define DEBUG 1
+
+#define pr_debug(fmt, ...) \
+    do { \
+        if (DEBUG) \
+            printf(fmt, ##__VA_ARGS__); \
+    } while (0)
+
 /**
  * Wifi Data Package Structure
  * || 1 byte   | length - 1 ||
@@ -15,7 +23,6 @@
 #define WIFI_CMD_CTL_DIR         3
 #define WIFI_CMD_TERMINATE       4
 #define WIFI_CMD_MOVE            5
-#define WIFI_CMD_IDLE            255
 
 #define WIFI_DATA_MAX            256
 
@@ -63,7 +70,7 @@ static void wifi_slave_heartbeat()
     int i = 0;
 
     adc = adc0_get_reading(ADC_PORT);
-    printf("Slave: before sending adc = %d\n", adc);
+    pr_debug("Slave: before sending adc = %d\n", adc);
     pkg[i++] = WIFI_CMD_GIVE_STATUS;
     pkg[i++] = error;
     pkg[i++] = (adc >> 8) & 0xf;
@@ -80,12 +87,10 @@ static int wifi_pkt_decoding(mesh_packet_t *pkt)
     uint32_t tmp;
     int i = 0;
 
-    if (cmd != WIFI_CMD_IDLE) {
-        if (mesh_get_node_address() == WIFI_MASTER_ADDR)
-            printf("---Master: got cmd %x\n", cmd);
-        else
-            printf("---Slave: got cmd %x\n", cmd);
-    }
+    if (mesh_get_node_address() == WIFI_MASTER_ADDR)
+        pr_debug("---Master: got cmd %x\n", cmd);
+    else
+        pr_debug("---Slave: got cmd %x\n", cmd);
 
     switch (cmd) {
         case WIFI_CMD_REQPWR:
@@ -111,7 +116,7 @@ static int wifi_pkt_decoding(mesh_packet_t *pkt)
                 printf("CMD_GIVE_STATUS: No status received!\n");
                 return cmd;
             }
-            printf("Master: got ADC val: %d\n",
+            pr_debug("Master: got ADC val: %d\n",
                     pkt->data[WIFI_STATUS_IDX_ADCU] << 8 |
                     pkt->data[WIFI_STATUS_IDX_ADCL]);
             break;
@@ -130,8 +135,6 @@ static int wifi_pkt_decoding(mesh_packet_t *pkt)
                   pkt->data[WIFI_MOVE_IDX_PARAM1] << 16;
             if (!xQueueSend(comm_queue, &tmp, 1000))
                 printf("failed to pass MOVE cmd to next layer\n");
-            break;
-        case WIFI_CMD_IDLE:
             break;
         default:
             printf("Undefined wireless commands: 0x%x\n", cmd);
@@ -170,7 +173,6 @@ static void mid_comm_task(void *p)
     uint32_t word;
     uint8_t steps;
 
-    printf("-----Task %s started\n", __func__);
     while (1) {
         if (!xQueueReceive(comm_queue, &word, 1000))
             continue;
@@ -247,11 +249,11 @@ void setStep(bool state)
 static void motion_task(void *p)
 {
     uint8_t steps;
-    printf("-----Task %s started\n", __func__);
+
     while (1) {
         if (!xQueueReceive(motion_queue, &steps, 1000))
             continue;
-        printf("%s: move %d steps\n", __func__, steps);
+        pr_debug("%s: move %d steps\n", __func__, steps);
         enableDrive(false);
         setDirection(CCW);
         while (steps--) {
@@ -277,7 +279,7 @@ void power_wifi_init()
 
     signalSlaveHeartbeat = xSemaphoreCreateBinary();
 
-    comm_queue = xQueueCreate(10, sizeof(uint32_t));
+    comm_queue = xQueueCreate(20, sizeof(uint32_t));
     motion_queue = xQueueCreate(10, sizeof(uint8_t));
 
     xTaskCreate(wifi_receive_task, "wifi_receive", STACK_BYTES(2048), 0, PRIORITY_MEDIUM, NULL);
