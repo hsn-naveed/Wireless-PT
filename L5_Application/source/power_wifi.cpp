@@ -33,6 +33,11 @@
  *
  * ||   1 byte   |      1 byte      |      1 byte      |     x byte     ||
  * || Error byte | ADC upper 4 bits | ADC lower 8 bits | Motor position ||
+ *
+ * Error byte Structure
+ *
+ * || 8th bit  | 7th bit  | 6th bit  | 5th bit  | 4th bit  | 3rd bit  | 2nd bit  | 1st bit  ||
+ * || reserved | reserved | reserved | reserved | reserved | reserved | reserved | Busy bit ||
  */
 #define WIFI_STATUS_IDX_ERR     1
 #define WIFI_STATUS_IDX_ADCU    2
@@ -69,6 +74,7 @@ static void wifi_slave_heartbeat()
     unsigned short adc;
     int i = 0;
 
+    error = busy;
     adc = adc0_get_reading(ADC_PORT);
     pr_debug("Slave: before sending adc = %d\n", adc);
     pkg[i++] = WIFI_CMD_GIVE_STATUS;
@@ -84,7 +90,7 @@ static int wifi_pkt_decoding(mesh_packet_t *pkt)
     char len = pkt->info.data_len;
     char cmd = pkt->data[0];
     char pkg[WIFI_DATA_MAX];
-    uint32_t tmp;
+    int8_t steps;
     int i = 0;
 
     if (mesh_get_node_address() == WIFI_MASTER_ADDR)
@@ -131,9 +137,8 @@ static int wifi_pkt_decoding(mesh_packet_t *pkt)
                 break;
             break;
         case WIFI_CMD_MOVE:
-            tmp = pkt->data[WIFI_MOVE_IDX_CMD] << 24 |
-                  pkt->data[WIFI_MOVE_IDX_PARAM1] << 16;
-            if (!xQueueSend(comm_queue, &tmp, 1000))
+            steps = pkt->data[WIFI_MOVE_IDX_PARAM1];
+            if (!xQueueSend(motion_queue, &steps, 1000))
                 printf("failed to pass MOVE cmd to next layer\n");
             break;
         default:
@@ -151,8 +156,8 @@ static void wifi_receive_task(void *p)
     while (1) {
         if (!wireless_get_rx_pkt(&pkt, 1000))//portMAX_DELAY))
             continue;
-        if (wifi_pkt_decoding(&pkt))
-            printf("Failed to decode wireless packet.\n");
+        if (!xQueueSend(comm_queue, &pkt, 1000))
+            printf("The packet could not be sent to comm queue\n");
     }
 }
 
@@ -170,40 +175,19 @@ static void wifi_slave_heartbeat_task(void *p)
 
 static void mid_comm_task(void *p)
 {
-    uint32_t word;
-    uint8_t steps;
+    mesh_packet_t pkt;
 
     while (1) {
-        if (!xQueueReceive(comm_queue, &word, 1000))
+        if (!xQueueReceive(comm_queue, &pkt, 1000))
             continue;
-
-        steps = PARAM1_UNPACK(word);
-        switch (CMD_UNPACK(word)){
-            case WIFI_CMD_MOVE:
-                printf("sending steps %d\n", steps);
-                if (busy) {
-                    //TO DO FUNCTION ALREADY BUSY;
-                    break;
-                }
-                if (!xQueueSend(motion_queue, &steps, 1000))
-                    printf("The command could not be sent to motion queue\n");
-                break;
-            case WIFI_CMD_GET_STATUS:
-                /* TODO Need to figure out a way to give feedback to wifi layer */
-                break;
-            default:
-                break;
-        }
+        if (wifi_pkt_decoding(&pkt))
+            printf("Failed to decode wireless packet.\n");
     }
 }
 
-#define P2_0 (1 << 0)
-#define P2_1 (1 << 1)
-#define P2_2 (1 << 2)
-
-#define DIRECTION_PIN P2_1
-#define ENABLE_PIN    P2_0
-#define STEP_PIN      P2_2
+#define DIRECTION_PIN (1 << 1)
+#define ENABLE_PIN    (1 << 0)
+#define STEP_PIN      (1 << 2)
 
 #define SPEED_MS  5
 
@@ -213,7 +197,7 @@ static void mid_comm_task(void *p)
 #define CW true
 #define CCW false
 
-void enableDrive(bool state)
+static void enableDrive(bool state)
 {
     // P2.0 for ENABLE
     if (state)
@@ -222,7 +206,7 @@ void enableDrive(bool state)
         LPC_GPIO2->FIOCLR = ENABLE_PIN;
 }
 
-void toggleStep(void)
+static void toggleStep(void)
 {
     if ((bool) (LPC_GPIO2->FIOPIN & STEP_PIN))
         LPC_GPIO2->FIOCLR = STEP_PIN;
@@ -230,7 +214,7 @@ void toggleStep(void)
         LPC_GPIO2->FIOSET = STEP_PIN;
 }
 
-void setDirection(bool direction)
+static void setDirection(bool direction)
 {
     if (direction)
         LPC_GPIO2->FIOSET = DIRECTION_PIN;
@@ -238,7 +222,7 @@ void setDirection(bool direction)
         LPC_GPIO2->FIOCLR = DIRECTION_PIN;
 }
 
-void setStep(bool state)
+static void setStep(bool state)
 {
     if (state)
         LPC_GPIO2->FIOSET = STEP_PIN;
@@ -254,12 +238,14 @@ static void motion_task(void *p)
         if (!xQueueReceive(motion_queue, &steps, 1000))
             continue;
         pr_debug("%s: move %d steps\n", __func__, steps);
+        busy = 1;
         enableDrive(false);
         setDirection(CCW);
         while (steps--) {
             toggleStep();
             vTaskDelay(SPEED_MS);
         }
+        busy = 0;
     }
 }
 
@@ -279,8 +265,8 @@ void power_wifi_init()
 
     signalSlaveHeartbeat = xSemaphoreCreateBinary();
 
-    comm_queue = xQueueCreate(20, sizeof(uint32_t));
-    motion_queue = xQueueCreate(10, sizeof(uint8_t));
+    comm_queue = xQueueCreate(20, sizeof(mesh_packet_t));
+    motion_queue = xQueueCreate(10, sizeof(int8_t));
 
     xTaskCreate(wifi_receive_task, "wifi_receive", STACK_BYTES(2048), 0, PRIORITY_MEDIUM, NULL);
     xTaskCreate(wifi_slave_heartbeat_task, "wifi_slave_heartbeat", STACK_BYTES(2048), 0, PRIORITY_MEDIUM, NULL);
