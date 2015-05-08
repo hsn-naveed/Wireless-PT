@@ -8,8 +8,17 @@
 #define pr_debug(fmt, ...) \
     do { \
         if (DEBUG) \
-            printf(fmt, ##__VA_ARGS__); \
+            printf("%s: %s: " fmt, \
+                   WIFI_IS_MASTER() ? "Master" : "Slave", \
+                   __func__, ##__VA_ARGS__); \
     } while (0)
+
+#define pr_info(fmt, ...) \
+    printf("%s: %s: " fmt, \
+           WIFI_IS_MASTER() ? "Master" : "Slave", \
+           __func__, ##__VA_ARGS__)
+
+#define pr_err pr_info
 
 /**
  * Wifi Data Package Structure
@@ -27,6 +36,7 @@
 #define WIFI_DATA_MAX            256
 
 #define WIFI_MASTER_ADDR         100
+#define WIFI_IS_MASTER()         (mesh_get_node_address() == WIFI_MASTER_ADDR)
 
 /**
  * Status Package Structure
@@ -76,7 +86,7 @@ static void wifi_slave_heartbeat()
 
     error = busy;
     adc = adc0_get_reading(ADC_PORT);
-    pr_debug("Slave: before sending adc = %d\n", adc);
+    pr_debug("before sending adc = %d\n", adc);
     pkg[i++] = WIFI_CMD_GIVE_STATUS;
     pkg[i++] = error;
     pkg[i++] = (adc >> 8) & 0xf;
@@ -93,10 +103,7 @@ static int wifi_pkt_decoding(mesh_packet_t *pkt)
     int8_t steps;
     int i = 0;
 
-    if (mesh_get_node_address() == WIFI_MASTER_ADDR)
-        pr_debug("---Master: got cmd %x\n", cmd);
-    else
-        pr_debug("---Slave: got cmd %x\n", cmd);
+    pr_debug("got cmd %x\n", cmd);
 
     switch (cmd) {
         case WIFI_CMD_REQPWR:
@@ -105,7 +112,7 @@ static int wifi_pkt_decoding(mesh_packet_t *pkt)
                 break;
             pkg[i++] = WIFI_CMD_GET_STATUS;
             if (!wireless_send(pkt->nwk.src, mesh_pkt_ack, pkg, i, 0))
-                printf("Master: Failed to reply REQPWR\n");;
+                pr_err("failed to reply REQPWR\n");;
             break;
         case WIFI_CMD_GET_STATUS:
             /* Slave: Master is asking my status */
@@ -119,12 +126,12 @@ static int wifi_pkt_decoding(mesh_packet_t *pkt)
             if (mesh_get_node_address() != WIFI_MASTER_ADDR)
                 break;
             if (!len) {
-                printf("CMD_GIVE_STATUS: No status received!\n");
+                pr_err("no status received!\n");
                 return cmd;
             }
-            pr_debug("Master: got ADC val: %d\n",
-                    pkt->data[WIFI_STATUS_IDX_ADCU] << 8 |
-                    pkt->data[WIFI_STATUS_IDX_ADCL]);
+            pr_debug("got ADC val: %d\n",
+                     pkt->data[WIFI_STATUS_IDX_ADCU] << 8 |
+                     pkt->data[WIFI_STATUS_IDX_ADCL]);
             break;
         case WIFI_CMD_CTL_DIR:
             /* Slave: Master is controlling my direction */
@@ -139,10 +146,10 @@ static int wifi_pkt_decoding(mesh_packet_t *pkt)
         case WIFI_CMD_MOVE:
             steps = pkt->data[WIFI_MOVE_IDX_PARAM1];
             if (!xQueueSend(motion_queue, &steps, 1000))
-                printf("failed to pass MOVE cmd to next layer\n");
+                pr_err("failed to pass MOVE cmd to next layer\n");
             break;
         default:
-            printf("Undefined wireless commands: 0x%x\n", cmd);
+            pr_err("undefined wireless commands: 0x%x\n", cmd);
             break;
     }
 
@@ -157,7 +164,7 @@ static void wifi_receive_task(void *p)
         if (!wireless_get_rx_pkt(&pkt, 1000))//portMAX_DELAY))
             continue;
         if (!xQueueSend(comm_queue, &pkt, 1000))
-            printf("The packet could not be sent to comm queue\n");
+            pr_err("failed to send packet to comm queue\n");
     }
 }
 
@@ -181,7 +188,7 @@ static void mid_comm_task(void *p)
         if (!xQueueReceive(comm_queue, &pkt, 1000))
             continue;
         if (wifi_pkt_decoding(&pkt))
-            printf("Failed to decode wireless packet.\n");
+            pr_err("failed to decode wireless packet.\n");
     }
 }
 
@@ -274,5 +281,7 @@ void power_wifi_init()
     xTaskCreate(motion_task, "motion_task", STACK_BYTES(2048), 0, PRIORITY_MEDIUM, NULL);
 
     if (!wireless_send(WIFI_MASTER_ADDR, mesh_pkt_ack, &cmd, sizeof(cmd), 0))
-        printf("Slave: Failed to send REQPWR\n");
+        pr_err("failed to send REQPWR\n");
+
+    pr_info("initialized\n");
 }
