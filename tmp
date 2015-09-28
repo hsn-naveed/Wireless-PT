@@ -1,0 +1,54 @@
+diff --git a/L5_Application/source/power_wifi.cpp b/L5_Application/source/power_wifi.cpp
+index f2ec549..f96cad3 100644
+--- a/L5_Application/source/power_wifi.cpp
++++ b/L5_Application/source/power_wifi.cpp
+@@ -14,6 +14,7 @@
+ #define WIFI_CMD_GIVE_STATUS     2
+ #define WIFI_CMD_CTL_DIR         3
+ #define WIFI_CMD_TERMINATE       4
++#define WIFI_CMD_IDLE            255
+ 
+ #define WIFI_DATA_MAX            256
+ 
+@@ -58,10 +59,13 @@ static int wifi_pkt_decoding(mesh_packet_t *pkt)
+     char pkg[WIFI_DATA_MAX];
+     int i = 0;
+ 
+-    if (mesh_get_node_address() == WIFI_MASTER_ADDR)
+-        printf("---Master: got cmd %x\n", cmd);
+-    else
+-        printf("---Slave: got cmd %x\n", cmd);
++
++    if (cmd != WIFI_CMD_IDLE) {
++        if (mesh_get_node_address() == WIFI_MASTER_ADDR)
++            printf("---Master: got cmd %x\n", cmd);
++        else
++            printf("---Slave: got cmd %x\n", cmd);
++    }
+ 
+     switch (cmd) {
+         case WIFI_CMD_REQPWR:
+@@ -101,6 +105,8 @@ static int wifi_pkt_decoding(mesh_packet_t *pkt)
+             if (mesh_get_node_address() == WIFI_MASTER_ADDR)
+                 break;
+             break;
++        case WIFI_CMD_IDLE:
++            break;
+         default:
+             printf("Undefined wireless commands: 0x%x\n", cmd);
+             break;
+@@ -116,7 +122,6 @@ static void wifi_receive_task(void *p)
+     while (1) {
+         if (!wireless_get_rx_pkt(&pkt, 1000))//portMAX_DELAY))
+             continue;
+-        printf("Wireless %d: Got something\n", mesh_get_node_address());
+         if (wifi_pkt_decoding(&pkt))
+             printf("Failed to decode wireless packet.\n");
+     }
+@@ -148,5 +153,5 @@ void power_wifi_init()
+     xTaskCreate(wifi_slave_heartbeat_task, "wifi_slave_heartbeat", STACK_BYTES(2048), 0, PRIORITY_HIGH, NULL);
+ 
+     if (!wireless_send(WIFI_MASTER_ADDR, mesh_pkt_ack, &cmd, sizeof(cmd), 0))
+-        printf("Slave: Failed to send REQPWR\n");;
++        printf("Slave: Failed to send REQPWR\n");
+ }
